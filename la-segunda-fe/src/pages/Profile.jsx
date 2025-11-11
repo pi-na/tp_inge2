@@ -1,0 +1,56 @@
+
+import { useEffect, useState } from 'react'
+import { api } from '../lib/api.js'
+
+export default function Profile() {
+  const [user, setUser] = useState(null)
+  const [err, setErr] = useState('')
+
+  async function load() {
+    try {
+      setErr('')
+      const u = await api.get('/users/me')
+      setUser(u)
+    } catch (e) {
+      setErr('Necesitás setear X-User-Id (arriba a la derecha).')
+    }
+  }
+  useEffect(()=>{ load() }, [])
+
+  async function save() {
+    const payload = { name: user.name, rating: user.rating }
+    const u = await api.patch('/users/me', payload)
+    setUser(u)
+    alert('Guardado')
+  }
+
+  if (err) return <div className="text-red-600">{err}</div>
+  if (!user) return <div>Cargando…</div>
+
+  return (
+    <div className="max-w-lg space-y-4">
+      <div className="rounded-xl border bg-white p-4 space-y-3">
+        <div className="text-sm text-gray-600">ID: <span className="font-mono">{user.id}</span></div>
+        <label className="block text-sm">Nombre</label>
+        <input className="border rounded px-3 py-2 w-full" value={user.name} onChange={e=>setUser({...user, name: e.target.value})} />
+        <label className="block text-sm">Rating (0–5)</label>
+        <input type="number" min="0" max="5" step="0.1" className="border rounded px-3 py-2 w-full" value={user.rating} onChange={e=>setUser({...user, rating: Number(e.target.value)})} />
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="rounded-lg bg-gray-50 p-3">
+            <div className="text-xs text-gray-500">Visitados</div>
+            <div className="font-semibold">{user.cant_events_visited}</div>
+          </div>
+          <div className="rounded-lg bg-gray-50 p-3">
+            <div className="text-xs text-gray-500">Organizados</div>
+            <div className="font-semibold">{user.cant_events_organized}</div>
+          </div>
+          <div className="rounded-lg bg-gray-50 p-3">
+            <div className="text-xs text-gray-500">No‑shows</div>
+            <div className="font-semibold">{user.cant_no_shows}</div>
+          </div>
+        </div>
+        <button className="px-4 py-2 rounded bg-sky-600 text-white" onClick={save}>Guardar</button>
+      </div>
+    </div>
+  )
+}

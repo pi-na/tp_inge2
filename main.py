@@ -13,6 +13,7 @@ import os
 from datetime import datetime
 from typing import Any, Optional, List, Literal
 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -96,6 +97,17 @@ class AcceptRejectBody(BaseModel):
 # FastAPI app
 # -------------
 app = FastAPI(title="La Segunda — MVP API", version="0.1.0")
+
+ALLOWED_ORIGINS = [os.getenv("FRONT_ORIGIN", "http://localhost:5173")]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,   # en dev: ["*"] si querés
+    allow_credentials=True,
+    allow_methods=["*"],             # GET, POST, PATCH, DELETE, OPTIONS
+    allow_headers=["*"],             # incluye X-User-Id, Content-Type, etc.
+)
+
 
 CATEGORIES = [
     "deportes", "cultural", "gastronomia", "turismo", "networking"
@@ -189,8 +201,19 @@ async def categories():
 # -------------
 # Users
 # -------------
+@app.post("/users/login", response_model=UserOut)
+async def login_user(body: UserCreate):
+    user = await db.users.find_one({"name": body.name})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return serialize_user(user)
+
 @app.post("/users/register", response_model=UserOut)
 async def register_user(body: UserCreate):
+    # Verificar que el nombre no exista
+    existing = await db.users.find_one({"name": body.name})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe un usuario con ese nombre")
     doc = {
         "name": body.name,
         "cant_events_visited": 0,
