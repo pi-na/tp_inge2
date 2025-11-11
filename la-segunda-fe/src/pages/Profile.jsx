@@ -18,7 +18,12 @@ export default function Profile() {
   useEffect(()=>{ load() }, [])
 
   async function save() {
-    const payload = { name: user.name, rating: user.rating }
+    const payload = { 
+      name: user.name, 
+      rating: user.rating,
+      phone: user.phone || '',
+      description: user.description || ''
+    }
     const u = await api.patch('/users/me', payload)
     setUser(u)
     alert('Guardado')
@@ -32,7 +37,11 @@ export default function Profile() {
       <div className="rounded-xl border bg-white p-4 space-y-3">
         <div className="text-sm text-gray-600">ID: <span className="font-mono">{user.id}</span></div>
         <label className="block text-sm">Nombre</label>
-        <input className="border rounded px-3 py-2 w-full" value={user.name} onChange={e=>setUser({...user, name: e.target.value})} />
+        <input className="border rounded px-3 py-2 w-full" value={user.name || ''} onChange={e=>setUser({...user, name: e.target.value})} />
+        <label className="block text-sm">Teléfono</label>
+        <input className="border rounded px-3 py-2 w-full" value={user.phone || ''} onChange={e=>setUser({...user, phone: e.target.value})} placeholder="Ej: +54 11 1234-5678" />
+        <label className="block text-sm">Descripción</label>
+        <textarea className="border rounded px-3 py-2 w-full" rows="3" value={user.description || ''} onChange={e=>setUser({...user, description: e.target.value})} placeholder="Escribe algo sobre ti..." />
         <label className="block text-sm">Rating (0–5)</label>
         <input type="number" min="0" max="5" step="0.1" className="border rounded px-3 py-2 w-full" value={user.rating} onChange={e=>setUser({...user, rating: Number(e.target.value)})} />
         <div className="grid grid-cols-3 gap-3 text-center">

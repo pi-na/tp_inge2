@@ -49,6 +49,8 @@ class UserCreate(BaseModel):
 class UserOut(BaseModel):
     id: str
     name: str
+    phone: Optional[str] = None
+    description: Optional[str] = None
     cant_events_visited: int = 0
     cant_events_organized: int = 0
     cant_no_shows: int = 0
@@ -78,7 +80,10 @@ class EventOut(BaseModel):
     fecha_inicio: datetime
     fecha_fin: datetime
     activo: int  # 0 eliminado, 1 activo, 2 cancelado
+    finalizado: bool = False  # marcado como finalizado por el organizador
     organizer_id: str
+    organizer_name: Optional[str] = None
+    organizer_rating: Optional[float] = None
     confirmed_participants: List[str]
     pending_approval_participants: List[str]
     blacklisted_participants: List[str]
@@ -92,6 +97,11 @@ class EventOut(BaseModel):
 class AcceptRejectBody(BaseModel):
     user_id: str
     blacklist: bool = False
+
+class MyEventsOut(BaseModel):
+    activos_no_finalizados: List[EventOut]
+    activos_finalizados: List[EventOut]
+    eliminados: List[EventOut]
 
 # -------------
 # FastAPI app
@@ -114,19 +124,26 @@ CATEGORIES = [
 ]
 
 def ensure_oid(s: str) -> ObjectId:
+    if not s:
+        raise HTTPException(status_code=400, detail="id inválido: string vacío")
+    s = s.strip()
     if not ObjectId.is_valid(s):
-        raise HTTPException(status_code=400, detail="id inválido")
+        raise HTTPException(status_code=400, detail=f"id inválido: '{s}' (longitud: {len(s)})")
     return ObjectId(s)
 
 async def get_current_user_id(x_user_id: Optional[str] = Header(default=None, alias="X-User-Id")) -> ObjectId:
     if not x_user_id:
         raise HTTPException(status_code=401, detail="X-User-Id requerido para esta operación")
+    # Limpiar espacios y validar
+    x_user_id = x_user_id.strip() if isinstance(x_user_id, str) else str(x_user_id).strip()
     return ensure_oid(x_user_id)
 
 def serialize_user(doc: dict[str, Any]) -> UserOut:
     return UserOut(
         id=str(doc["_id"]),
         name=doc["name"],
+        phone=doc.get("phone"),
+        description=doc.get("description"),
         cant_events_visited=doc.get("cant_events_visited", 0),
         cant_events_organized=doc.get("cant_events_organized", 0),
         cant_no_shows=doc.get("cant_no_shows", 0),
@@ -135,8 +152,13 @@ def serialize_user(doc: dict[str, Any]) -> UserOut:
         updated_at=doc["updated_at"],
     )
 
-def serialize_event(doc: dict[str, Any]) -> EventOut:
+def serialize_event(doc: dict[str, Any], organizer_info: Optional[dict[str, Any]] = None) -> EventOut:
     loc = doc["location"]["coordinates"]  # [lng, lat]
+    organizer_name = None
+    organizer_rating = None
+    if organizer_info:
+        organizer_name = organizer_info.get("name")
+        organizer_rating = float(organizer_info.get("rating", 0.0))
     out = EventOut(
         id=str(doc["_id"]),
         title=doc["title"],
@@ -144,7 +166,10 @@ def serialize_event(doc: dict[str, Any]) -> EventOut:
         fecha_inicio=doc["fecha_inicio"],
         fecha_fin=doc["fecha_fin"],
         activo=int(doc["activo"]),
+        finalizado=bool(doc.get("finalizado", False)),
         organizer_id=str(doc["organizer_id"]),
+        organizer_name=organizer_name,
+        organizer_rating=organizer_rating,
         confirmed_participants=[str(u) for u in doc.get("confirmed_participants", [])],
         pending_approval_participants=[str(u) for u in doc.get("pending_approval_participants", [])],
         blacklisted_participants=[str(u) for u in doc.get("blacklisted_participants", [])],
@@ -239,7 +264,7 @@ async def users_me_patch(
     payload: dict = Body(...),
     user_id: ObjectId = Depends(get_current_user_id),
 ):
-    allowed = {"name", "rating"}  # rating se permite editar en MVP
+    allowed = {"name", "rating", "phone", "description"}  # campos editables
     updates = {k: v for k, v in payload.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
@@ -247,6 +272,23 @@ async def users_me_patch(
     await db.users.update_one({"_id": user_id}, {"$set": updates})
     user = await db.users.find_one({"_id": user_id})
     return serialize_user(user)
+
+@app.get("/users/{user_id}", response_model=UserOut)
+async def get_user(user_id: str):
+    """Obtiene información de un usuario por su ID"""
+    _id = ensure_oid(user_id)
+    user = await db.users.find_one({"_id": _id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return serialize_user(user)
+
+@app.post("/users/batch", response_model=List[UserOut])
+async def get_users_batch(user_ids: List[str] = Body(...)):
+    """Obtiene información de múltiples usuarios por sus IDs"""
+    oids = [ensure_oid(uid) for uid in user_ids]
+    cursor = db.users.find({"_id": {"$in": oids}})
+    users = [serialize_user(u) async for u in cursor]
+    return users
 
 # -------------
 # Events (CRUD)
@@ -261,6 +303,7 @@ async def create_event(body: EventCreate, user_id: ObjectId = Depends(get_curren
         "fecha_inicio": body.fecha_inicio,
         "fecha_fin": body.fecha_fin,
         "activo": 1,  # activo
+        "finalizado": False,  # no finalizado al crear
         "organizer_id": user_id,
         "confirmed_participants": [],
         "pending_approval_participants": [],
@@ -273,15 +316,53 @@ async def create_event(body: EventCreate, user_id: ObjectId = Depends(get_curren
     }
     res = await db.events.insert_one(doc)
     ev = await db.events.find_one({"_id": res.inserted_id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": user_id})
+    return serialize_event(ev, organizer)
 
-@app.get("/events/{event_id}", response_model=EventOut)
-async def get_event(event_id: str):
-    _id = ensure_oid(event_id)
-    ev = await db.events.find_one({"_id": _id})
-    if not ev:
-        raise HTTPException(status_code=404, detail="Evento no encontrado")
-    return serialize_event(ev)
+@app.get("/events/my", response_model=MyEventsOut)
+async def get_my_events(user_id: ObjectId = Depends(get_current_user_id)):
+    """Obtiene los eventos del usuario organizados por estado:
+    - activos_no_finalizados: activos (activo=1) y no comenzados/en transcurso (fecha_fin >= ahora)
+    - activos_finalizados: activos (activo=1) y finalizados (fecha_fin < ahora)
+    - eliminados: eliminados (activo=0)
+    """
+    now_dt = now()
+    
+    # Eventos activos no finalizados (activo=1, no marcados como finalizados, y fecha_fin >= ahora)
+    cursor_activos_no_fin = db.events.find({
+        "organizer_id": user_id,
+        "activo": 1,
+        "finalizado": {"$ne": True},  # no finalizados
+        "fecha_fin": {"$gte": now_dt}
+    }).sort("fecha_inicio", 1)
+    activos_no_finalizados = [d async for d in cursor_activos_no_fin]
+    
+    # Eventos activos finalizados (activo=1 y (marcados como finalizados O fecha_fin < ahora))
+    cursor_activos_fin = db.events.find({
+        "organizer_id": user_id,
+        "activo": 1,
+        "$or": [
+            {"finalizado": True},  # marcados como finalizados
+            {"fecha_fin": {"$lt": now_dt}}  # o fecha ya pasó
+        ]
+    }).sort("fecha_fin", -1)  # más recientes primero
+    activos_finalizados = [d async for d in cursor_activos_fin]
+    
+    # Eventos eliminados (activo=0)
+    cursor_eliminados = db.events.find({
+        "organizer_id": user_id,
+        "activo": 0
+    }).sort("updated_at", -1)  # más recientes primero
+    eliminados = [d async for d in cursor_eliminados]
+    
+    # Obtener información del organizador (el usuario mismo)
+    organizer = await db.users.find_one({"_id": user_id})
+    
+    return {
+        "activos_no_finalizados": [serialize_event(d, organizer) for d in activos_no_finalizados],
+        "activos_finalizados": [serialize_event(d, organizer) for d in activos_finalizados],
+        "eliminados": [serialize_event(d, organizer) for d in eliminados]
+    }
 
 @app.get("/events", response_model=List[EventOut])
 async def list_events(
@@ -297,6 +378,8 @@ async def list_events(
     skip: int = Query(0, ge=0),
 ):
     match: dict[str, Any] = {"activo": status}
+    # Excluir eventos finalizados en la búsqueda de descubrir
+    match["finalizado"] = {"$ne": True}  # no finalizados
     if category:
         match["category"] = category
     # fechas
@@ -331,12 +414,20 @@ async def list_events(
         ]
         cursor = db.events.aggregate(pipeline)
         docs = [d async for d in cursor]
+        # Obtener organizadores únicos
+        organizer_ids = list(set([d["organizer_id"] for d in docs]))
+        organizers_map = {}
+        if organizer_ids:
+            org_cursor = db.users.find({"_id": {"$in": organizer_ids}})
+            async for org in org_cursor:
+                organizers_map[str(org["_id"])] = org
         # map distance_meters through serialization
         out = []
         for d in docs:
             # pass through computed distance
             d["distance_meters"] = float(d.get("distance_meters", 0.0))
-            out.append(serialize_event(d))
+            organizer = organizers_map.get(str(d["organizer_id"]))
+            out.append(serialize_event(d, organizer))
         return out
 
     # Si no hay lat/lng: .find simple con filtros y sort por fecha
@@ -345,7 +436,23 @@ async def list_events(
         query = {**match, "title": {"$regex": q, "$options": "i"}}
     cursor = db.events.find(query).sort("fecha_inicio", 1).skip(skip).limit(limit)
     docs = [d async for d in cursor]
-    return [serialize_event(d) for d in docs]
+    # Obtener organizadores únicos
+    organizer_ids = list(set([d["organizer_id"] for d in docs]))
+    organizers_map = {}
+    if organizer_ids:
+        org_cursor = db.users.find({"_id": {"$in": organizer_ids}})
+        async for org in org_cursor:
+            organizers_map[str(org["_id"])] = org
+    return [serialize_event(d, organizers_map.get(str(d["organizer_id"]))) for d in docs]
+
+@app.get("/events/{event_id}", response_model=EventOut)
+async def get_event(event_id: str):
+    _id = ensure_oid(event_id)
+    ev = await db.events.find_one({"_id": _id})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 @app.patch("/events/{event_id}/cancel", response_model=EventOut)
 async def cancel_event(event_id: str, user_id: ObjectId = Depends(get_current_user_id)):
@@ -357,7 +464,8 @@ async def cancel_event(event_id: str, user_id: ObjectId = Depends(get_current_us
         raise HTTPException(status_code=403, detail="Sólo el organizador puede cancelar")
     await db.events.update_one({"_id": _id}, {"$set": {"activo": 2, "updated_at": now()}})
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 @app.delete("/events/{event_id}", response_model=EventOut)
 async def delete_event(event_id: str, user_id: ObjectId = Depends(get_current_user_id)):
@@ -369,7 +477,8 @@ async def delete_event(event_id: str, user_id: ObjectId = Depends(get_current_us
         raise HTTPException(status_code=403, detail="Sólo el organizador puede eliminar")
     await db.events.update_one({"_id": _id}, {"$set": {"activo": 0, "updated_at": now()}})
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 # -------------
 # Postulación y moderación
@@ -397,7 +506,8 @@ async def apply_to_event(event_id: str, user_id: ObjectId = Depends(get_current_
         },
     )
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/accept", response_model=EventOut)
 async def accept_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId = Depends(get_current_user_id)):
@@ -418,7 +528,8 @@ async def accept_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId =
         },
     )
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/reject", response_model=EventOut)
 async def reject_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId = Depends(get_current_user_id)):
@@ -440,7 +551,8 @@ async def reject_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId =
         update["$addToSet"] = {"blacklisted_participants": target}
     await db.events.update_one({"_id": _id}, update)
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 # -------------
 # Finalización + métricas simples
@@ -453,6 +565,8 @@ async def complete_event(event_id: str, user_id: ObjectId = Depends(get_current_
         raise HTTPException(status_code=404, detail="Evento no encontrado")
     if ev["organizer_id"] != user_id:
         raise HTTPException(status_code=403, detail="Sólo el organizador puede completar")
+    if ev.get("finalizado", False):
+        raise HTTPException(status_code=400, detail="El evento ya está finalizado")
     # actualizar contadores
     confirmed: list[ObjectId] = ev.get("confirmed_participants", [])
     if confirmed:
@@ -464,9 +578,14 @@ async def complete_event(event_id: str, user_id: ObjectId = Depends(get_current_
         {"_id": ev["organizer_id"]},
         {"$inc": {"cant_events_organized": 1}}
     )
-    await db.events.update_one({"_id": _id}, {"$set": {"updated_at": now()}})
+    # Marcar evento como finalizado
+    await db.events.update_one(
+        {"_id": _id}, 
+        {"$set": {"finalizado": True, "updated_at": now()}}
+    )
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/no_show", response_model=EventOut)
 async def mark_no_show(
@@ -498,4 +617,5 @@ async def mark_no_show(
 
     await db.events.update_one({"_id": _id}, {"$set": {"updated_at": now()}})
     ev = await db.events.find_one({"_id": _id})
-    return serialize_event(ev)
+    organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    return serialize_event(ev, organizer)
