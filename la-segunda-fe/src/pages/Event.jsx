@@ -119,10 +119,10 @@ export default function Event() {
   const mapUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${ev.location.lng-0.01},${ev.location.lat-0.01},${ev.location.lng+0.01},${ev.location.lat+0.01}&layer=mapnik&marker=${ev.location.lat},${ev.location.lng}`
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border bg-white p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">{ev.title}</h2>
+    <div className="space-y-3 sm:space-y-4">
+      <div className="rounded-xl border bg-white p-3 sm:p-4 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base sm:text-lg font-semibold flex-1 min-w-0">{ev.title}</h2>
           <Chip>{ev.category}</Chip>
           <Chip>estado: {ev.activo===1?'activo': ev.activo===2?'cancelado':'eliminado'}</Chip>
           {ev.finalizado && <Chip className="bg-green-100 text-green-800 border-green-300">finalizado</Chip>}
@@ -149,18 +149,18 @@ export default function Event() {
           </div>
         )}
         
-        <div className="text-sm text-gray-600">{new Date(ev.fecha_inicio).toLocaleString()} → {new Date(ev.fecha_fin).toLocaleString()}</div>
-        {!!ev.location_alias && <div className="text-sm">📍 {ev.location_alias}</div>}
-        {ev.description && <p className="text-sm mt-2">{ev.description}</p>}
-        <div className="text-sm text-gray-600 flex items-center gap-2">
-          <span>Organizador: {ev.organizer_name ? (
+        <div className="text-xs sm:text-sm text-gray-600 break-words">{new Date(ev.fecha_inicio).toLocaleString('es-AR')} → {new Date(ev.fecha_fin).toLocaleString('es-AR')}</div>
+        {!!ev.location_alias && <div className="text-xs sm:text-sm">📍 {ev.location_alias}</div>}
+        {ev.description && <p className="text-xs sm:text-sm mt-2 break-words">{ev.description}</p>}
+        <div className="text-xs sm:text-sm text-gray-600 flex flex-col sm:flex-row sm:items-center gap-2">
+          <span className="break-words">Organizador: {ev.organizer_name ? (
             <span>{ev.organizer_name}{ev.organizer_rating !== undefined ? `(${ev.organizer_rating.toFixed(1)})` : ''}</span>
           ) : (
             <span className="font-mono">{ev.organizer_id.slice(0,8)}…</span>
           )}</span>
           <Link 
             to={`/users/${ev.organizer_id}`}
-            className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700"
+            className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700 whitespace-nowrap self-start sm:self-auto"
           >
             Ver perfil
           </Link>
@@ -168,12 +168,12 @@ export default function Event() {
       </div>
 
       {/* Mapa */}
-      <div className="rounded-xl border bg-white p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Ubicación</h3>
-          <button onClick={openInMaps} className="px-3 py-1 rounded border text-sm">Abrir en mapas</button>
+      <div className="rounded-xl border bg-white p-3 sm:p-4 space-y-2">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <h3 className="font-semibold text-sm sm:text-base">Ubicación</h3>
+          <button onClick={openInMaps} className="px-3 py-1.5 sm:py-1 rounded border text-xs sm:text-sm whitespace-nowrap">Abrir en mapas</button>
         </div>
-        <div className="w-full h-64 rounded overflow-hidden">
+        <div className="w-full h-48 sm:h-64 rounded overflow-hidden">
           <iframe
             width="100%"
             height="100%"
@@ -190,17 +190,17 @@ export default function Event() {
 
       {/* Participantes confirmados */}
       {confirmed.length > 0 && (
-        <div className="rounded-xl border bg-white p-4">
-          <h3 className="font-semibold mb-2">Participantes confirmados ({confirmed.length})</h3>
+        <div className="rounded-xl border bg-white p-3 sm:p-4">
+          <h3 className="font-semibold text-sm sm:text-base mb-2">Participantes confirmados ({confirmed.length})</h3>
           <ul className="space-y-2">
             {confirmed.map(uid => {
               const user = confirmedUsers[uid]
               return (
-                <li key={uid} className="flex items-center justify-between text-sm">
+                <li key={uid} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs sm:text-sm">
                   <UserName userId={uid} name={user?.name} rating={user?.rating} />
                   <Link 
                     to={`/users/${uid}`}
-                    className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700"
+                    className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700 whitespace-nowrap self-start sm:self-auto"
                   >
                     Ver perfil
                   </Link>
@@ -211,12 +211,12 @@ export default function Event() {
         </div>
       )}
 
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex flex-col sm:flex-row gap-2 flex-wrap">
         {isOrganizer ? (
           <>
             {ev.activo===1 && !ev.finalizado && (
               <button 
-                className="px-4 py-2 rounded-md font-medium text-white shadow-md hover:shadow-lg transition-all" 
+                className="px-3 sm:px-4 py-2 rounded-md font-medium text-sm sm:text-base text-white shadow-md hover:shadow-lg transition-all" 
                 style={{ backgroundColor: '#16a34a', border: 'none' }}
                 onClick={complete}
               >
@@ -225,19 +225,19 @@ export default function Event() {
             )}
             {ev.activo===1 && !ev.finalizado && (
               <button 
-                className="px-4 py-2 rounded-md font-medium border-2 border-gray-300 hover:bg-gray-50 transition-all" 
+                className="px-3 sm:px-4 py-2 rounded-md font-medium text-sm sm:text-base border-2 border-gray-300 hover:bg-gray-50 transition-all" 
                 onClick={cancel}
               >
                 Cancelar evento
               </button>
             )}
             {ev.finalizado && (
-              <div className="px-4 py-2 rounded-md font-medium text-white shadow-md" style={{ backgroundColor: '#16a34a' }}>
+              <div className="px-3 sm:px-4 py-2 rounded-md font-medium text-sm sm:text-base text-white shadow-md" style={{ backgroundColor: '#16a34a' }}>
                 ✓ Evento finalizado
               </div>
             )}
             <button 
-              className="px-4 py-2 rounded-md font-medium border-2 border-red-300 text-red-600 hover:bg-red-50 transition-all" 
+              className="px-3 sm:px-4 py-2 rounded-md font-medium text-sm sm:text-base border-2 border-red-300 text-red-600 hover:bg-red-50 transition-all" 
               onClick={del}
             >
               Eliminar evento
@@ -246,15 +246,15 @@ export default function Event() {
         ) : (
           <>
             {ev.activo===1 && userStatus === null && (
-              <button className="px-3 py-2 rounded bg-sky-600 text-white" onClick={apply}>Postularme</button>
+              <button className="px-3 sm:px-4 py-2 rounded bg-sky-600 text-white text-sm sm:text-base" onClick={apply}>Postularme</button>
             )}
             {userStatus === 'pending' && (
-              <div className="px-3 py-2 rounded bg-yellow-100 text-yellow-800">
+              <div className="px-3 sm:px-4 py-2 rounded bg-yellow-100 text-yellow-800 text-sm sm:text-base">
                 Esperando confirmación
               </div>
             )}
             {userStatus === 'confirmed' && (
-              <div className="px-3 py-2 rounded bg-green-100 text-green-800">
+              <div className="px-3 sm:px-4 py-2 rounded bg-green-100 text-green-800 text-sm sm:text-base">
                 Participación confirmada
               </div>
             )}
@@ -263,27 +263,27 @@ export default function Event() {
       </div>
 
       {isOrganizer && (
-        <div className="rounded-xl border bg-white p-4">
-          <h3 className="font-semibold mb-2">Pendientes de aprobación</h3>
-          {pending.length===0 ? <div className="text-sm text-gray-600">No hay pendientes.</div> : (
-            <ul className="space-y-2">
+        <div className="rounded-xl border bg-white p-3 sm:p-4">
+          <h3 className="font-semibold text-sm sm:text-base mb-2">Pendientes de aprobación</h3>
+          {pending.length===0 ? <div className="text-xs sm:text-sm text-gray-600">No hay pendientes.</div> : (
+            <ul className="space-y-3">
               {pending.map(uid => {
                 const user = pendingUsers[uid]
                 return (
-                  <li key={uid} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <li key={uid} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1 min-w-0">
                       <UserName userId={uid} name={user?.name} rating={user?.rating} />
                       <Link 
                         to={`/users/${uid}`}
-                        className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700"
+                        className="text-xs px-2 py-1 rounded border bg-blue-50 hover:bg-blue-100 text-blue-700 whitespace-nowrap self-start sm:self-auto"
                       >
                         Ver perfil
                       </Link>
                     </div>
-                    <div className="flex gap-2">
-                      <button className="px-3 py-1 rounded border" onClick={()=>accept(uid)}>Aceptar</button>
-                      <button className="px-3 py-1 rounded border" onClick={()=>reject(uid,false)}>Rechazar</button>
-                      <button className="px-3 py-1 rounded border" onClick={()=>reject(uid,true)}>Rechazar + blacklist</button>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="px-2 sm:px-3 py-1 rounded border text-xs sm:text-sm whitespace-nowrap" onClick={()=>accept(uid)}>Aceptar</button>
+                      <button className="px-2 sm:px-3 py-1 rounded border text-xs sm:text-sm whitespace-nowrap" onClick={()=>reject(uid,false)}>Rechazar</button>
+                      <button className="px-2 sm:px-3 py-1 rounded border text-xs sm:text-sm whitespace-nowrap" onClick={()=>reject(uid,true)}>Rechazar + blacklist</button>
                     </div>
                   </li>
                 )

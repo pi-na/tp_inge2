@@ -102,25 +102,25 @@ export default function Discover() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border bg-white p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-          <input className="border rounded px-3 py-2 sm:col-span-2" placeholder="Buscar por título..." value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter' && refresh()} />
-          <select className="border rounded px-3 py-2" value={category} onChange={e=>setCategory(e.target.value)}>
+    <div className="space-y-3 sm:space-y-4">
+      <div className="rounded-xl border bg-white p-3 sm:p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
+          <input className="border rounded px-3 py-2 text-sm sm:text-base sm:col-span-2" placeholder="Buscar por título..." value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter' && refresh()} />
+          <select className="border rounded px-3 py-2 text-sm sm:text-base" value={category} onChange={e=>setCategory(e.target.value)}>
             <option value="">Todas las categorías</option>
             {CATS.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <div className="flex gap-2">
-            <input className="border rounded px-3 py-2 w-full" placeholder="Distancia (km)" value={distance} onChange={e=>setDistance(e.target.value)} onKeyDown={e=>e.key==='Enter' && refresh()} />
-            <button className="px-3 py-2 rounded border" onClick={getLocation}>Actualizar ubicación</button>
+          <div className="flex flex-col sm:flex-row gap-2 sm:col-span-2 lg:col-span-1">
+            <input className="border rounded px-3 py-2 text-sm sm:text-base flex-1" placeholder="Distancia (km)" value={distance} onChange={e=>setDistance(e.target.value)} onKeyDown={e=>e.key==='Enter' && refresh()} />
+            <button className="px-3 py-2 rounded border text-sm sm:text-base whitespace-nowrap" onClick={getLocation}>📍 Ubicación</button>
           </div>
-          <button className="px-3 py-2 rounded bg-sky-500 text-white" onClick={refresh}>Actualizar</button>
+          <button className="px-3 py-2 rounded bg-sky-500 text-white text-sm sm:text-base sm:col-span-2 lg:col-span-1" onClick={refresh}>Actualizar</button>
         </div>
         {locationError && (
           <div className="text-xs text-red-600 mt-2">{locationError}</div>
         )}
         {coords && (
-          <div className="text-xs text-gray-600 mt-2">
+          <div className="text-xs text-gray-600 mt-2 break-words">
             Ubicación: {coords.lat.toFixed(4)}, {coords.lng.toFixed(4)} • Eventos ordenados por distancia
           </div>
         )}
@@ -131,25 +131,16 @@ export default function Discover() {
 
       {/* Cards de eventos scrolleables */}
       {events.length > 0 && (
-        <div className="rounded-xl border bg-white p-4">
-          <h3 className="font-semibold mb-3">Eventos encontrados ({events.length})</h3>
-          <div className="overflow-x-auto pb-2">
-            <div className="flex gap-4" style={{ minWidth: 'max-content' }}>
+        <div className="rounded-xl border bg-white p-3 sm:p-4">
+          <h3 className="font-semibold text-sm sm:text-base mb-3">Eventos encontrados ({events.length})</h3>
+          <div className="overflow-x-auto pb-2 -mx-3 sm:-mx-4 px-3 sm:px-4">
+            <div className="flex gap-3 sm:gap-4" style={{ minWidth: 'max-content' }}>
               {events.map(ev => {
                 const userId = getUserId()
                 // Comparar como strings para asegurar que funcione
                 const isOwner = Boolean(userId && ev.organizer_id && String(userId) === String(ev.organizer_id))
-                // Debug temporal - remover después
-                if (userId && ev.organizer_id) {
-                  console.log('Comparando:', {
-                    userId: String(userId),
-                    organizer_id: String(ev.organizer_id),
-                    sonIguales: String(userId) === String(ev.organizer_id),
-                    isOwner
-                  })
-                }
                 return (
-                  <div key={ev.id} className="flex-shrink-0" style={{ width: '320px' }}>
+                  <div key={ev.id} className="flex-shrink-0" style={{ width: 'min(280px, 85vw)' }}>
                     <EventCard ev={ev} isOwner={isOwner} />
                   </div>
                 )
@@ -161,13 +152,13 @@ export default function Discover() {
 
       {/* Mapa */}
       {coords && (
-        <div className="rounded-xl border bg-white p-4">
-          <h3 className="font-semibold mb-2">Mapa de eventos</h3>
-          <div className="w-full h-64 rounded overflow-hidden relative">
+        <div className="rounded-xl border bg-white p-3 sm:p-4">
+          <h3 className="font-semibold text-sm sm:text-base mb-2">Mapa de eventos</h3>
+          <div className="w-full h-48 sm:h-64 rounded overflow-hidden relative">
             <MapContainer
               center={[coords.lat, coords.lng]}
               zoom={15}
-              style={{ height: '100%', width: '100%', minHeight: '256px' }}
+              style={{ height: '100%', width: '100%', minHeight: '192px' }}
               scrollWheelZoom={true}
               key={`map-${coords.lat}-${coords.lng}`}
             >
