@@ -1,0 +1,96 @@
+# version: '3.8'  # Obsoleto en Docker Compose v2+
+
+services:
+  # MongoDB
+  mongodb:
+    image: mongo:7
+    container_name: la_segunda_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - la_segunda_net
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: la_segunda_rabbitmq
+    ports:
+      - "5672:5672"    # AMQP port
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - la_segunda_net
+
+  # Backend FastAPI
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: la_segunda_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=la_segunda
+      - RABBITMQ_URI=amqp://admin:admin@rabbitmq:5672/
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./main.py:/app/main.py  # Para hot reload en desarrollo
+    networks:
+      - la_segunda_net
+    restart: unless-stopped
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./la-segunda-fe
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://127.0.0.1:8000}
+    container_name: la_segunda_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://127.0.0.1:8000}
+    depends_on:
+      - backend
+    volumes:
+      - ./la-segunda-fe/src:/app/src  # Para hot reload
+      - ./la-segunda-fe/index.html:/app/index.html
+      - ./la-segunda-fe/vite.config.js:/app/vite.config.js
+      - ./la-segunda-fe/tailwind.config.js:/app/tailwind.config.js
+      - ./la-segunda-fe/postcss.config.js:/app/postcss.config.js
+    networks:
+      - la_segunda_net
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  rabbitmq_data:
+
+networks:
+  la_segunda_net:
+    driver: bridge
+

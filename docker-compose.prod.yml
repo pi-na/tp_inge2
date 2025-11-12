@@ -1,0 +1,18 @@
+version: '3.8'
+
+# Docker Compose para producción (sin hot reload)
+# Uso: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+
+services:
+  backend:
+    volumes: []  # Sin volumen para hot reload en producción
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+
+  frontend:
+    build:
+      context: ./la-segunda-fe
+      dockerfile: Dockerfile.prod
+    volumes: []  # Sin volumen para hot reload en producción
+    environment:
+      - VITE_API_URL=http://backend:8000
+

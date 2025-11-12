@@ -13,10 +13,18 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}🚀 Iniciando entorno de desarrollo...${NC}\n"
 
+# Limpiar procesos anteriores en puerto 8000
+echo -e "${YELLOW}🧹 Limpiando procesos anteriores...${NC}"
+lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+sleep 1
+
 # Función para limpiar procesos al salir
 cleanup() {
     echo -e "\n${YELLOW}🛑 Deteniendo procesos...${NC}"
     kill $BACKEND_PID $FRONTEND_PID $NGROK_PID 2>/dev/null || true
+    # También matar procesos en puertos conocidos
+    lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:5173 | xargs kill -9 2>/dev/null || true
     exit
 }
 
@@ -48,8 +56,23 @@ else
 fi
 
 # 2. Configurar VITE_API_URL
-export VITE_API_URL="http://${LOCAL_IP}:8000"
-echo -e "${GREEN}✓ VITE_API_URL=${VITE_API_URL}${NC}\n"
+# Si hay un .env con VITE_API_URL configurado, usarlo (para ngrok)
+if [ -f "la-segunda-fe/.env" ] && grep -q "VITE_API_URL=" la-segunda-fe/.env && ! grep -q "VITE_API_URL=$" la-segunda-fe/.env; then
+    # Leer VITE_API_URL del .env
+    EXISTING_URL=$(grep "VITE_API_URL=" la-segunda-fe/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    if [ -n "$EXISTING_URL" ]; then
+        export VITE_API_URL="$EXISTING_URL"
+        echo -e "${GREEN}✓ Usando VITE_API_URL del .env: ${VITE_API_URL}${NC}"
+    else
+        export VITE_API_URL="http://${LOCAL_IP}:8000"
+        echo -e "${GREEN}✓ VITE_API_URL=${VITE_API_URL}${NC}"
+    fi
+else
+    export VITE_API_URL="http://${LOCAL_IP}:8000"
+    echo -e "${GREEN}✓ VITE_API_URL=${VITE_API_URL}${NC}"
+    echo -e "${YELLOW}💡 Para usar ngrok desde el celular, configura VITE_API_URL en la-segunda-fe/.env${NC}"
+fi
+echo ""
 
 # 3. Verificar que ngrok esté instalado
 if ! command -v ngrok &> /dev/null; then

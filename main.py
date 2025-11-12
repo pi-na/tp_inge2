@@ -10,15 +10,18 @@
 from __future__ import annotations
 
 import os
+import json
+import asyncio
 from datetime import datetime
 from typing import Any, Optional, List, Literal
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
+import aio_pika
 
 # ----------------------------
 # Simplificaciones (decisiones)
@@ -39,6 +42,19 @@ MONGO_DB = os.getenv("MONGO_DB", "la_segunda")
 
 client: AsyncIOMotorClient | None = None
 db = None
+
+# -----------------
+# RabbitMQ connection
+# -----------------
+RABBITMQ_URI = os.getenv("RABBITMQ_URI", "amqp://admin:admin@localhost:5672/")
+rabbitmq_connection: aio_pika.Connection | None = None
+rabbitmq_channel: aio_pika.Channel | None = None
+notification_exchange: aio_pika.Exchange | None = None
+
+# -----------------
+# SSE streams (user_id -> asyncio.Queue)
+# -----------------
+active_sse_streams: dict[str, asyncio.Queue] = {}
 
 # -------------
 # Pydantic I/O
@@ -103,6 +119,17 @@ class MyEventsOut(BaseModel):
     activos_finalizados: List[EventOut]
     eliminados: List[EventOut]
 
+class NotificationOut(BaseModel):
+    id: str
+    user_id: str
+    type: str  # "new_application", "application_accepted", "application_rejected", "event_started", "event_finished", "event_cancelled"
+    title: str
+    message: str
+    event_id: Optional[str] = None
+    event_title: Optional[str] = None
+    read: bool = False
+    created_at: datetime
+
 # -------------
 # FastAPI app
 # -------------
@@ -127,6 +154,19 @@ app.add_middleware(
     allow_methods=["*"],             # GET, POST, PATCH, DELETE, OPTIONS
     allow_headers=["*"],             # incluye X-User-Id, Content-Type, etc.
 )
+
+# Middleware para logging de requests (después de CORS)
+@app.middleware("http")
+async def log_requests(request, call_next):
+    if request.url.path == "/users/login" and request.method == "POST":
+        print(f"🔍 POST /users/login recibido")
+        print(f"🔍 Headers: {dict(request.headers)}")
+        print(f"🔍 Content-Type: {request.headers.get('content-type', 'N/A')}")
+        print(f"🔍 Content-Length: {request.headers.get('content-length', 'N/A')}")
+    response = await call_next(request)
+    if request.url.path == "/users/login" and request.method == "POST":
+        print(f"🔍 Response status: {response.status_code}")
+    return response
 
 
 CATEGORIES = [
@@ -195,6 +235,109 @@ def serialize_event(doc: dict[str, Any], organizer_info: Optional[dict[str, Any]
 # ------------------------
 # Lifespan / Indexes setup
 # ------------------------
+async def rabbitmq_consumer():
+    """Consumer de RabbitMQ que envía notificaciones a SSE streams"""
+    global rabbitmq_connection, rabbitmq_channel, notification_exchange
+    
+    # Esperar un poco para que MongoDB esté listo
+    await asyncio.sleep(2)
+    
+    print(f"🔄 Intentando conectar a RabbitMQ: {RABBITMQ_URI}")
+    
+    try:
+        # Conectar a RabbitMQ
+        print("📡 Conectando a RabbitMQ...")
+        rabbitmq_connection = await aio_pika.connect_robust(RABBITMQ_URI)
+        print("✅ Conexión a RabbitMQ establecida")
+        
+        rabbitmq_channel = await rabbitmq_connection.channel()
+        print("✅ Canal de RabbitMQ creado")
+        
+        # Crear exchange y queue
+        notification_exchange = await rabbitmq_channel.declare_exchange(
+            "notifications", aio_pika.ExchangeType.DIRECT, durable=True
+        )
+        print("✅ Exchange 'notifications' declarado")
+        
+        queue = await rabbitmq_channel.declare_queue("notification_queue", durable=True)
+        print("✅ Queue 'notification_queue' declarada")
+        
+        await queue.bind(notification_exchange, routing_key="notifications")
+        print("✅ Queue vinculada al exchange")
+        
+        print("=" * 60)
+        print("✅ RabbitMQ conectado y consumer iniciado correctamente")
+        print("=" * 60)
+        
+        # Consumir mensajes
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                try:
+                    async with message.process():
+                        data = json.loads(message.body.decode())
+                        user_id = data["user_id"]
+                        
+                        # Enviar a SSE stream si está activo
+                        if user_id in active_sse_streams:
+                            print(f"📤 Enviando notificación a usuario {user_id} via SSE (tipo: {data.get('type', 'unknown')})")
+                            await active_sse_streams[user_id].put(data)
+                        else:
+                            print(f"⚠️ Usuario {user_id} no tiene SSE stream activo.")
+                            print(f"   Streams activos: {list(active_sse_streams.keys())}")
+                            print(f"   Nota: La notificación se guardó en MongoDB y aparecerá cuando el usuario recargue la página.")
+                except Exception as e:
+                    print(f"❌ Error procesando mensaje de RabbitMQ: {e}")
+                    import traceback
+                    traceback.print_exc()
+    except Exception as e:
+        print("=" * 60)
+        print(f"❌ Error en consumer de RabbitMQ: {e}")
+        print("=" * 60)
+        import traceback
+        traceback.print_exc()
+        # Si RabbitMQ no está disponible, continuar sin él
+        rabbitmq_connection = None
+        rabbitmq_channel = None
+        notification_exchange = None
+
+async def check_event_starts():
+    """Tarea en background que verifica eventos que comenzaron y notifica a participantes"""
+    while True:
+        try:
+            await asyncio.sleep(60)  # Verificar cada minuto
+            now_dt = now()
+            
+            # Buscar eventos que comenzaron en el último minuto
+            cursor = db.events.find({
+                "activo": 1,
+                "finalizado": {"$ne": True},
+                "fecha_inicio": {
+                    "$gte": datetime.fromtimestamp(now_dt.timestamp() - 120),  # Últimos 2 minutos
+                    "$lte": now_dt
+                }
+            })
+            
+            async for ev in cursor:
+                # Notificar a participantes confirmados
+                for participant_id in ev.get("confirmed_participants", []):
+                    # Verificar si ya notificamos este evento
+                    existing = await db.notifications.find_one({
+                        "user_id": ObjectId(participant_id),
+                        "event_id": ev["_id"],
+                        "type": "event_started"
+                    })
+                    if not existing:
+                        await publish_notification(
+                            user_id=str(participant_id),
+                            notification_type="event_started",
+                            title="Evento comenzó",
+                            message=f"El evento '{ev['title']}' ha comenzado",
+                            event_id=str(ev["_id"]),
+                            event_title=ev["title"],
+                        )
+        except Exception as e:
+            print(f"Error en check_event_starts: {e}")
+
 @app.on_event("startup")
 async def on_startup():
     global client, db
@@ -206,12 +349,41 @@ async def on_startup():
     await db.events.create_index([("category", 1)])
     await db.events.create_index([("fecha_inicio", 1)])
     await db.events.create_index([("activo", 1)])
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
     # Ready ping
     await db.command("ping")
+    
+    # Iniciar consumer de RabbitMQ en background
+    asyncio.create_task(rabbitmq_consumer())
+    # Iniciar tarea para verificar eventos que comienzan
+    asyncio.create_task(check_event_starts())
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    client.close()
+    print("🛑 Cerrando conexiones...")
+    # Cerrar todos los SSE streams
+    for user_id in list(active_sse_streams.keys()):
+        del active_sse_streams[user_id]
+    print(f"✅ {len(active_sse_streams)} SSE streams cerrados")
+    
+    # Cerrar RabbitMQ
+    if rabbitmq_connection:
+        try:
+            await rabbitmq_connection.close()
+            print("✅ Conexión RabbitMQ cerrada")
+        except Exception as e:
+            print(f"⚠️ Error cerrando RabbitMQ: {e}")
+    
+    # Cerrar MongoDB
+    if client:
+        try:
+            client.close()
+            print("✅ Conexión MongoDB cerrada")
+        except Exception as e:
+            print(f"⚠️ Error cerrando MongoDB: {e}")
+    
+    print("✅ Shutdown completo")
 
 # ---------
 # Utilities
@@ -221,6 +393,82 @@ def now() -> datetime:
 
 def geojson_point(p: GeoPoint) -> dict[str, Any]:
     return {"type": "Point", "coordinates": [p.lng, p.lat]}
+
+# ---------
+# Notification utilities
+# ---------
+async def save_notification(user_id: str, notification_type: str, title: str, message: str, event_id: Optional[str] = None, event_title: Optional[str] = None):
+    """Guarda una notificación en MongoDB"""
+    doc = {
+        "user_id": ObjectId(user_id),
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "event_id": ObjectId(event_id) if event_id else None,
+        "event_title": event_title,
+        "read": False,
+        "created_at": now(),
+    }
+    await db.notifications.insert_one(doc)
+
+async def publish_notification(user_id: str, notification_type: str, title: str, message: str, event_id: Optional[str] = None, event_title: Optional[str] = None):
+    """Publica una notificación a RabbitMQ y la guarda en MongoDB"""
+    # Guardar en MongoDB primero para obtener el ID
+    doc = {
+        "user_id": ObjectId(user_id),
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "event_id": ObjectId(event_id) if event_id else None,
+        "event_title": event_title,
+        "read": False,
+        "created_at": now(),
+    }
+    result = await db.notifications.insert_one(doc)
+    notification_id = str(result.inserted_id)
+    
+    # Publicar a RabbitMQ
+    if not notification_exchange:
+        print(f"⚠️ RabbitMQ no disponible, notificación guardada en MongoDB: {notification_id}")
+        return
+    
+    notification_data = {
+        "id": notification_id,
+        "user_id": user_id,
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "event_id": event_id,
+        "event_title": event_title,
+        "read": False,
+        "created_at": doc["created_at"].isoformat(),
+    }
+    
+    try:
+        await notification_exchange.publish(
+            aio_pika.Message(
+                json.dumps(notification_data).encode(),
+                content_type="application/json",
+            ),
+            routing_key="notifications",
+        )
+        print(f"✅ Notificación publicada a RabbitMQ para usuario {user_id}: {notification_type}")
+    except Exception as e:
+        print(f"❌ Error publicando notificación a RabbitMQ: {e}")
+        print(f"   Exchange disponible: {notification_exchange is not None}")
+
+def serialize_notification(doc: dict[str, Any]) -> NotificationOut:
+    return NotificationOut(
+        id=str(doc["_id"]),
+        user_id=str(doc["user_id"]),
+        type=doc["type"],
+        title=doc["title"],
+        message=doc["message"],
+        event_id=str(doc["event_id"]) if doc.get("event_id") else None,
+        event_title=doc.get("event_title"),
+        read=bool(doc.get("read", False)),
+        created_at=doc["created_at"],
+    )
 
 # --------------
 # Public routes
@@ -234,13 +482,136 @@ async def categories():
     return {"categories": CATEGORIES}
 
 # -------------
+# Notifications (SSE + History)
+# -------------
+@app.get("/notifications/stream")
+async def stream_notifications(
+    x_user_id: Optional[str] = Query(None, alias="X-User-Id"),
+):
+    """Endpoint SSE para recibir notificaciones en tiempo real"""
+    # EventSource no puede enviar headers, así que aceptamos user_id como query param
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="X-User-Id requerido")
+    user_id = ensure_oid(x_user_id)
+    
+    user_id_str = str(user_id)
+    queue = asyncio.Queue()
+    
+    # Verificar si hay notificaciones no leídas recientes y enviarlas al conectar
+    # (para notificaciones que llegaron antes de que el usuario se conectara)
+    try:
+        cursor = db.notifications.find(
+            {
+                "user_id": user_id,
+                "read": False,
+                "created_at": {"$gte": datetime.fromtimestamp(now().timestamp() - 300)}  # Últimos 5 minutos
+            }
+        ).sort("created_at", -1).limit(10)
+        recent_notifications = [n async for n in cursor]
+        
+        # Enviar notificaciones recientes al stream
+        for notif in reversed(recent_notifications):  # Más antiguas primero
+            notification_data = {
+                "id": str(notif["_id"]),
+                "user_id": user_id_str,
+                "type": notif["type"],
+                "title": notif["title"],
+                "message": notif["message"],
+                "event_id": str(notif["event_id"]) if notif.get("event_id") else None,
+                "event_title": notif.get("event_title"),
+                "read": False,
+                "created_at": notif["created_at"].isoformat(),
+            }
+            await queue.put(notification_data)
+            print(f"📬 Reenviando notificación reciente al usuario {user_id_str}: {notif['type']}")
+    except Exception as e:
+        print(f"⚠️ Error al cargar notificaciones recientes: {e}")
+    
+    active_sse_streams[user_id_str] = queue
+    print(f"🔔 SSE stream iniciado para usuario {user_id_str}. Total streams activos: {len(active_sse_streams)}")
+    
+    async def event_generator():
+        try:
+            while True:
+                # Esperar mensaje de la queue (con timeout para mantener conexión viva)
+                try:
+                    notification = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    print(f"📤 Enviando notificación por SSE a usuario {user_id_str}: {notification.get('type', 'unknown')}")
+                    yield f"data: {json.dumps(notification)}\n\n"
+                except asyncio.TimeoutError:
+                    # Enviar keepalive
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            if user_id_str in active_sse_streams:
+                del active_sse_streams[user_id_str]
+        except Exception as e:
+            print(f"Error en SSE stream para usuario {user_id_str}: {e}")
+            if user_id_str in active_sse_streams:
+                del active_sse_streams[user_id_str]
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+@app.get("/notifications", response_model=List[NotificationOut])
+async def get_notifications(
+    user_id: ObjectId = Depends(get_current_user_id),
+    limit: int = Query(50, ge=1, le=100),
+    skip: int = Query(0, ge=0),
+):
+    """Obtiene el historial de notificaciones del usuario"""
+    cursor = db.notifications.find(
+        {"user_id": user_id}
+    ).sort("created_at", -1).skip(skip).limit(limit)
+    notifications = [serialize_notification(n) async for n in cursor]
+    return notifications
+
+@app.patch("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: str,
+    user_id: ObjectId = Depends(get_current_user_id),
+):
+    """Marca una notificación como leída"""
+    _id = ensure_oid(notification_id)
+    notification = await db.notifications.find_one({"_id": _id, "user_id": user_id})
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notificación no encontrada")
+    await db.notifications.update_one(
+        {"_id": _id},
+        {"$set": {"read": True}}
+    )
+    return {"ok": True}
+
+@app.patch("/notifications/read-all")
+async def mark_all_notifications_read(
+    user_id: ObjectId = Depends(get_current_user_id),
+):
+    """Marca todas las notificaciones del usuario como leídas"""
+    await db.notifications.update_many(
+        {"user_id": user_id, "read": False},
+        {"$set": {"read": True}}
+    )
+    return {"ok": True}
+
+# -------------
 # Users
 # -------------
 @app.post("/users/login", response_model=UserOut)
 async def login_user(body: UserCreate):
+    print(f"🔍 login_user llamado con name: '{body.name}'")
+    print(f"🔍 Buscando usuario en MongoDB...")
     user = await db.users.find_one({"name": body.name})
+    print(f"🔍 Resultado de búsqueda: {user is not None}")
     if not user:
+        print(f"🔍 Usuario '{body.name}' no encontrado en la base de datos")
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    print(f"🔍 Usuario encontrado: {user.get('name', 'N/A')}")
     return serialize_user(user)
 
 @app.post("/users/register", response_model=UserOut)
@@ -475,6 +846,19 @@ async def cancel_event(event_id: str, user_id: ObjectId = Depends(get_current_us
     await db.events.update_one({"_id": _id}, {"$set": {"activo": 2, "updated_at": now()}})
     ev = await db.events.find_one({"_id": _id})
     organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    
+    # Notificar a participantes confirmados y pendientes
+    all_participants = list(ev.get("confirmed_participants", [])) + list(ev.get("pending_approval_participants", []))
+    for participant_id in all_participants:
+        await publish_notification(
+            user_id=str(participant_id),
+            notification_type="event_cancelled",
+            title="Evento cancelado",
+            message=f"El evento '{ev['title']}' ha sido cancelado",
+            event_id=str(_id),
+            event_title=ev["title"],
+        )
+    
     return serialize_event(ev, organizer)
 
 @app.delete("/events/{event_id}", response_model=EventOut)
@@ -517,6 +901,19 @@ async def apply_to_event(event_id: str, user_id: ObjectId = Depends(get_current_
     )
     ev = await db.events.find_one({"_id": _id})
     organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    
+    # Notificar al organizador
+    applicant = await db.users.find_one({"_id": user_id})
+    applicant_name = applicant.get("name", "Un usuario") if applicant else "Un usuario"
+    await publish_notification(
+        user_id=str(ev["organizer_id"]),
+        notification_type="new_application",
+        title="Nueva postulación",
+        message=f"{applicant_name} quiere unirse a tu evento '{ev['title']}'",
+        event_id=str(_id),
+        event_title=ev["title"],
+    )
+    
     return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/accept", response_model=EventOut)
@@ -539,6 +936,17 @@ async def accept_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId =
     )
     ev = await db.events.find_one({"_id": _id})
     organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    
+    # Notificar al usuario aceptado
+    await publish_notification(
+        user_id=str(target),
+        notification_type="application_accepted",
+        title="Postulación aceptada",
+        message=f"Tu solicitud para unirte a '{ev['title']}' fue aceptada",
+        event_id=str(_id),
+        event_title=ev["title"],
+    )
+    
     return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/reject", response_model=EventOut)
@@ -562,6 +970,20 @@ async def reject_user(event_id: str, body: AcceptRejectBody, user_id: ObjectId =
     await db.events.update_one({"_id": _id}, update)
     ev = await db.events.find_one({"_id": _id})
     organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    
+    # Notificar al usuario rechazado
+    message = f"Tu solicitud para unirte a '{ev['title']}' fue rechazada"
+    if body.blacklist:
+        message += " y fuiste bloqueado para este evento"
+    await publish_notification(
+        user_id=str(target),
+        notification_type="application_rejected",
+        title="Postulación rechazada",
+        message=message,
+        event_id=str(_id),
+        event_title=ev["title"],
+    )
+    
     return serialize_event(ev, organizer)
 
 # -------------
@@ -595,6 +1017,18 @@ async def complete_event(event_id: str, user_id: ObjectId = Depends(get_current_
     )
     ev = await db.events.find_one({"_id": _id})
     organizer = await db.users.find_one({"_id": ev["organizer_id"]})
+    
+    # Notificar a participantes confirmados
+    for participant_id in confirmed:
+        await publish_notification(
+            user_id=str(participant_id),
+            notification_type="event_finished",
+            title="Evento finalizado",
+            message=f"El evento '{ev['title']}' ha finalizado",
+            event_id=str(_id),
+            event_title=ev["title"],
+        )
+    
     return serialize_event(ev, organizer)
 
 @app.post("/events/{event_id}/no_show", response_model=EventOut)

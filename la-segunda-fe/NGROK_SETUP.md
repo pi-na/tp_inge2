@@ -71,6 +71,33 @@ Cada vez que reinicies ngrok, deberás:
 
 Si quieres una URL fija, necesitas una cuenta de pago de ngrok.
 
+## Solución al "Browser Warning" de ngrok
+
+Ngrok free muestra un "browser warning" que bloquea las requests automáticas. El código ya incluye el header `ngrok-skip-browser-warning: true` en todas las requests para evitar este problema.
+
+Si aún tienes problemas, puedes deshabilitar el warning completamente ejecutando ngrok con:
+
+```bash
+ngrok http 8000 --request-header-add "ngrok-skip-browser-warning: true"
+```
+
+O mejor aún, si tienes una cuenta de ngrok autenticada, puedes configurar ngrok para que no muestre el warning editando `~/.ngrok2/ngrok.yml`:
+
+```yaml
+version: "2"
+authtoken: TU_TOKEN
+tunnels:
+  backend:
+    proto: http
+    addr: 8000
+    inspect: false
+    request_header:
+      add:
+        - "ngrok-skip-browser-warning: true"
+```
+
+Y luego ejecutar: `ngrok start backend`
+
 ## Alternativa: Usar solo IP local (sin ngrok)
 
 Si estás en la misma red WiFi, puedes usar tu IP local sin ngrok:
