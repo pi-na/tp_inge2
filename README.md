@@ -1,82 +1,95 @@
-# La Segunda - MVP
+# La Segunda — MVP
 
-Aplicación de eventos sociales con notificaciones en tiempo real usando RabbitMQ y SSE.
+Aplicación web para organizar y descubrir eventos locales.
 
-## Inicio Rápido
+## 🚀 Inicio Rápido
 
-### Opción A: Docker (Recomendado)
+### 1. Levantar los servicios con Docker Compose
 
 ```bash
-# Levantar todos los servicios (MongoDB, RabbitMQ, Backend, Frontend)
 docker-compose up -d
+```
 
-# Ver logs
-docker-compose logs -f
+Esto iniciará:
+- **MongoDB** (puerto 27017)
+- **RabbitMQ** (puerto 5672)
+- **Backend FastAPI** (puerto 8000)
+- **Frontend React** (puerto 5173)
 
-# Detener
+### 2. Acceder al sitio
+
+Abre tu navegador en:
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+### 3. Detener los servicios
+
+```bash
 docker-compose down
 ```
 
-Ver `DOCKER_SETUP.md` para más detalles.
-
-### Opción B: Desarrollo Local
-
+Para detener y eliminar los contenedores (pero mantener los datos):
 ```bash
-# 1. Instalar dependencias
-pip3 install -r requirements.txt
-cd la-segunda-fe && npm install && cd ..
-
-# 2. Levantar servicios
-# RabbitMQ (Docker)
-docker-compose up -d rabbitmq mongodb
-
-# Backend y Frontend
-./start-dev.sh
+docker-compose stop
 ```
 
-### 3. Acceder
+## 📱 Acceder desde el celular (ngrok)
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- RabbitMQ Management: http://localhost:15672 (admin/admin)
+Si quieres probar desde tu celular:
 
-## Comandos Útiles
+1. **Inicia ngrok para el backend**:
+   ```bash
+   ngrok http 8000
+   ```
+   Copia la URL HTTPS que muestra.
 
-### Matar proceso del backend
+2. **Configura el frontend**:
+   ```bash
+   ./config-ngrok-docker.sh
+   ```
+   Pega la URL del backend cuando te lo pida.
 
+3. **Inicia ngrok para el frontend** (en otra terminal):
+   ```bash
+   ngrok http 5173
+   ```
+
+4. **Abre la URL de ngrok del frontend en tu celular**
+
+## 📚 Comandos útiles
+
+Ver logs de todos los servicios:
 ```bash
-./kill-backend.sh
-# O manualmente:
-lsof -ti:8000 | xargs kill -9
+docker-compose logs -f
 ```
 
-### Ver logs de RabbitMQ
-
+Ver logs de un servicio específico:
 ```bash
-docker logs -f la_segunda_rabbitmq
+docker-compose logs -f backend
+docker-compose logs -f frontend
 ```
 
-### Configurar ngrok para celular
-
-**Opción 1: Script automático (recomendado)**
+Reiniciar un servicio:
 ```bash
-./config-ngrok.sh
+docker-compose restart backend
+docker-compose restart frontend
 ```
 
-**Opción 2: Manual**
-Ver `CONFIGURAR_NGROK_CELU.md`
+Reconstruir después de cambios:
+```bash
+docker-compose build
+docker-compose up -d
+```
 
-## Estructura
+## 🔧 Desarrollo
 
-- `main.py` - Backend FastAPI con RabbitMQ y SSE
-- `la-segunda-fe/` - Frontend React
-- `docker-compose.yml` - RabbitMQ
-- `start-dev.sh` - Script para iniciar todo
-- `kill-backend.sh` - Script para matar procesos
+El código del frontend está montado como volumen, por lo que los cambios se reflejan automáticamente (hot reload).
 
-## Documentación
+Para hacer cambios en el backend, edita `main.py` y el servidor se recargará automáticamente.
 
-- `DEBUG_NOTIFICACIONES.md` - Guía de debugging de notificaciones
-- `RABBITMQ_SETUP.md` - Configuración de RabbitMQ
-- `CONFIGURAR_NGROK_CELU.md` - Configuración para celular
-- `SOLUCION_NGROK.md` - Solución de problemas con ngrok
+## 📖 Documentación adicional
+
+- `NGROK_FRONTEND_DOCKER.md` - Configuración detallada de ngrok
+- `DEBUG_NOTIFICACIONES.md` - Debugging de notificaciones
+- `RABBITMQ_SETUP.md` - Información sobre RabbitMQ
