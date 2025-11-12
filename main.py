@@ -108,11 +108,21 @@ class MyEventsOut(BaseModel):
 # -------------
 app = FastAPI(title="La Segunda — MVP API", version="0.1.0")
 
-ALLOWED_ORIGINS = [os.getenv("FRONT_ORIGIN", "http://localhost:5173")]
+# Configuración de CORS flexible para desarrollo
+FRONT_ORIGIN = os.getenv("FRONT_ORIGIN", "")
+if FRONT_ORIGIN:
+    # Si hay variable de entorno, usarla
+    ALLOWED_ORIGINS = [FRONT_ORIGIN]
+elif os.getenv("ENV") == "production":
+    # En producción, solo localhost
+    ALLOWED_ORIGINS = ["http://localhost:5173"]
+else:
+    # En desarrollo, permitir todos los orígenes (útil para IP local y ngrok)
+    ALLOWED_ORIGINS = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,   # en dev: ["*"] si querés
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],             # GET, POST, PATCH, DELETE, OPTIONS
     allow_headers=["*"],             # incluye X-User-Id, Content-Type, etc.
