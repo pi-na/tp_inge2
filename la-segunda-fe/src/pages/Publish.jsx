@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
 
 const CATS = ["deportes","cultural","gastronomia","turismo","networking"]
@@ -14,14 +14,47 @@ export default function Publish() {
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
 
-  function pickLocation() {
-    if (!navigator.geolocation) return alert('Geolocalización no disponible')
+  // Obtener ubicación automáticamente al cargar
+  useEffect(() => {
+    const DEFAULT_LAT = '-34.6058'
+    const DEFAULT_LNG = '-58.3739'
+    if (!navigator.geolocation) {
+      setLat(DEFAULT_LAT)
+      setLng(DEFAULT_LNG)
+      return
+    }
     navigator.geolocation.getCurrentPosition(
       pos => {
         setLat(String(pos.coords.latitude))
         setLng(String(pos.coords.longitude))
       },
-      err => alert('No se pudo obtener ubicación: ' + err.message),
+      err => {
+        setLat(DEFAULT_LAT)
+        setLng(DEFAULT_LNG)
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    )
+  }, [])
+
+  function pickLocation() {
+    const DEFAULT_LAT = '-34.6058'
+    const DEFAULT_LNG = '-58.3739'
+    if (!navigator.geolocation) {
+      setLat(DEFAULT_LAT)
+      setLng(DEFAULT_LNG)
+      alert('Geolocalización no disponible, usando ubicación por defecto')
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setLat(String(pos.coords.latitude))
+        setLng(String(pos.coords.longitude))
+      },
+      err => {
+        setLat(DEFAULT_LAT)
+        setLng(DEFAULT_LNG)
+        alert('No se pudo obtener ubicación, usando ubicación por defecto: ' + err.message)
+      },
       { enableHighAccuracy: true, timeout: 8000 }
     )
   }

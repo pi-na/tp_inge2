@@ -28,8 +28,10 @@ export default function Discover() {
 
   // Obtener ubicación automáticamente al cargar
   useEffect(()=>{
+    const DEFAULT_COORDS = { lat: -34.6058, lng: -58.3739 }
     if (!navigator.geolocation) {
-      setLocationError('Geolocalización no disponible')
+      setLocationError('Geolocalización no disponible, usando ubicación por defecto')
+      setCoords(DEFAULT_COORDS)
       return
     }
     navigator.geolocation.getCurrentPosition(
@@ -38,7 +40,8 @@ export default function Discover() {
         setLocationError(null)
       },
       (err)=> {
-        setLocationError('No se pudo obtener ubicación: ' + err.message)
+        setLocationError('No se pudo obtener ubicación, usando ubicación por defecto: ' + err.message)
+        setCoords(DEFAULT_COORDS)
       },
       { enableHighAccuracy: true, timeout: 8000 }
     )
@@ -70,15 +73,20 @@ export default function Discover() {
   }
 
   function getLocation() {
-    if (!navigator.geolocation) return alert('Geolocalización no disponible')
+    const DEFAULT_COORDS = { lat: -34.6058, lng: -58.3739 }
+    if (!navigator.geolocation) {
+      setLocationError('Geolocalización no disponible, usando ubicación por defecto')
+      setCoords(DEFAULT_COORDS)
+      return
+    }
     navigator.geolocation.getCurrentPosition(
       (pos)=>{
         setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude })
         setLocationError(null)
       },
       (err)=> {
-        setLocationError('No se pudo obtener ubicación: ' + err.message)
-        alert('No se pudo obtener ubicación: ' + err.message)
+        setLocationError('No se pudo obtener ubicación, usando ubicación por defecto: ' + err.message)
+        setCoords(DEFAULT_COORDS)
       },
       { enableHighAccuracy: true, timeout: 8000 }
     )
